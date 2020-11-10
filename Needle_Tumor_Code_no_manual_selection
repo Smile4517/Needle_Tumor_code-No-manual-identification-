@@ -1,0 +1,595 @@
+% Code for Needle Tumors 
+% This code asks the user which experiment they would like to process and
+% consequently loads all of the data from that experiment 
+% The code consequently creates performs the tumor segmentation, outputting
+% segmentations of individual invasions as well as the tumor area, the
+% maximum area threshold image, binary cavity mask
+% and the needle tumor periphery. The distance between the cavity and the
+% tumor is also calculated. The code also outputs a table containing data for all of the collective invasions in addition to all of the individual invasions without 
+% manual selection from user. This code saves the segmentations to one folder and then calculations and tables to another folder. 
+
+clear vars 
+outputfolder = uigetdir('C:\Users\Owner\OneDrive\Desktop\Stoll Fellowship Code\','Where would you like to store the converted data?');% Enter output folder
+prompt = 'What name handle would you like to use? (s(number).mat will be added automatically)\\n (enter inside single quotes)\\n';
+dlgtitle = 'Name Handle';
+dims = [1 40];
+outputname = inputdlg(prompt, dlgtitle, dims);
+
+prompt = {' What experiment would you like to process? '}; % Enter ExpID
+dlgtitle = 'Select Experiment';
+dims = [1 40];
+ExpID_ = string(inputdlg(prompt, dlgtitle, dims));
+
+prompt = {' Which tumors would you like to process? '}; % Enter tumor indices
+dlgtitle = 'Tumor Indices';
+dims = [1 40];
+wells = inputdlg(prompt, dlgtitle, dims);
+tumors = str2num(wells{1}); % Vector of tumor indices that user wants to process
+
+prompt = {' Which days would you like to process? '}; % Assumed that days inputted will be run for each tumor
+dlgtitle = 'Days to Process';
+dims = [1 40];
+days_input = inputdlg(prompt, dlgtitle, dims);
+days = str2num(days_input{1}); % Vector of day indices that user wants to process
+
+for i = 1: length(tumors)
+    for k = 1: length(days)
+        try
+        Raw_Image = imread(strcat('C:\Users\Owner\OneDrive\Desktop\Stoll Fellowship Code\',ExpID_,'\tu',num2str(tumors(i)),'_d',num2str(days(k)), '.tif'));
+        catch ME
+        fprintf('WEBREAD without success: %s\n', ME.message);
+        continue;  % Jump to next iteration of: for i
+        end
+       fprintf("WEBREAD worked successfully\n");
+       
+        %Raw_Image = importdata(strcat('C:\Users\Owner\OneDrive\Desktop\Stoll Fellowship Code\',ExpID_,'\tu',num2str(tumors(i)),'_d',num2str(days(k)), '.tif')); %add in appropriate file details
+        %Ask user if any images need to be rotated in order to have cavity on left side
+        figure;
+        imshow(imadjust(Raw_Image));
+      
+        prompt = { 'Would you like to rotate the image?(y/n)'};
+        dlgtitle = 'Rotating Images';
+        dims = [1 40];
+        definput = {'y'};
+        answer = inputdlg(prompt, dlgtitle, dims, definput);
+        
+        if strcmp(answer, 'y')
+            Image = flip(Raw_Image, 2);
+            Image_adjust = imadjust(Image);
+            imshow(Image_adjust);
+        else
+            Image = Raw_Image;
+        end
+        
+        %Canny edge detection to identify cells, escape cavity, and needle tumor
+%periphery
+[~,threshold] = edge(Image,'canny');
+fudgefactor = 2;
+BWs = edge(Image, 'canny', threshold*fudgefactor);
+
+%Shows mask generated from canny edge detection
+TPmask = boundarymask(BWs);
+TPBoundary = imshow(labeloverlay(Image, TPmask, 'Transparency',0));
+
+% Fill in holes in mask because some edges are detected within needle tumor
+% periphery
+BWdfill = imfill(TPmask,'holes');
+imshow(BWdfill)
+title('Binary Image with Filled Holes')
+
+% Morphological closing to further eliminate holes in mask (Works well for
+% E2_T9  and E2_T15
+se2 = strel('disk', 2);
+BWclose = imclose(BWdfill, se2);
+imshow(BWclose); 
+
+%Interactive closing that enables user to click larger areas that have not
+%been closed by the above methods. User must double click when finished. 
+%If there are no big holes, user can simply double click, and the code will
+%continue
+if i == 1
+    fill_title = 'Fill Holes';
+    uiwait(msgbox({'Please click on larger black areas of image that you would like to fill.'; 'Double click when finished.'}, fill_title));
+end
+
+BWdfill2 = imfill(BWclose);
+imshow(BWdfill2)
+
+%Final iteration of fill holes in order to make sure everything was covered
+BWdfill3 = imfill(BWdfill2, 'holes');
+imshow(BWdfill3)
+title('Binary Image with Filled Holes')
+
+prompt = {'Would you like to continue fill (y/n)?'};
+    dlgtitle = 'Fill Holes';
+    dims = [1 40];
+    input = {'y'};
+    Fill_again = inputdlg(prompt, dlgtitle, dims, input);
+    
+if strcmp(Fill_again, 'y')
+    Fill2_title = 'Fill Holes';
+    uiwait(msgbox({'Please click on larger black areas of image that you would like to fill.'; 'Double click when finished.'}, Fill2_title));
+    BWdfill4 = imfill(BWdfill3);
+    BW_active_contour = activecontour(Image,BWdfill4,10,'edge');
+else
+%Active contour to perfect the edge as morphological closing may have
+%caused mask to go beyond needle tumor periphery
+BW_active_contour = activecontour(Image,BWdfill3,10,'edge');
+%imageSegmenter(textureBottom);
+end
+imshow(BW_active_contour); % shows mask for needle tumor periphery
+%(in most cases still connected to cavity)
+
+%By drawing rectangle, user can separate the cavity from the needle tumor
+%periphery. This code will generate mask of cut
+if i == 1
+     msg_title = 'Drawing Elliptical and Rectangular Masks';
+     uiwait(msgbox({'Please draw elliptical mask, and double click when finished.';' Then draw rectangular mask, and double click in overlapping region when finished'}));
+end
+ 
+ellipseMask1 = drawellipse;
+wait(ellipseMask1);
+Emask = createMask(ellipseMask1);
+%clear ellipseMask1;
+line = drawrectangle;
+wait(line);
+Rmask = createMask(line);
+
+%Flip both rectangular mask and elliptical mask
+Rmask_inv = ~Rmask;
+Emask_inv = ~Emask;
+BW_Rmask = BW_active_contour.*Rmask_inv;
+imshow(BW_Rmask);
+BW_Emask = BW_Rmask.*Emask_inv;
+imshow(BW_Emask);
+
+%Combines both elliptical and rectangular masks into cavity mask
+cavity = Rmask+Emask.*(Rmask==0);
+imshow(cavity);
+cavity_BW = imbinarize(cavity);
+imshow(cavity_BW);
+%cavity_BW_edge = activecontour(Image,cavity_BW,'edge',50);
+%imshow(cavity_BW); 
+
+%Apply edge active contour so that edge properly wraps around the
+%tumor periphery
+I2Bmask = activecontour(Image,BW_Emask,20,'edge');
+imshow(I2Bmask);
+
+%Applies filter to eliminate the smaller segments in code (2 options here:
+%area filter and opening
+Total_Tumor = bwareaopen(I2Bmask, 200);
+imshow(Total_Tumor);
+
+
+BWmask = boundarymask(Total_Tumor);
+imshow(BWmask);
+    
+Image1_adjust1 = imadjust(Image);
+blocations = bwboundaries(Total_Tumor,'noholes');
+figure
+imshow(Image1_adjust1, []);
+for ind = 1:numel(blocations)
+    % Convert to x,y order.
+    pos = blocations{ind};
+    pos = fliplr(pos);
+    % Create a freehand ROI.
+    drawfreehand('Position', pos);
+end
+
+% Convert edited ROI back to masks.
+hfhs = findobj(gca, 'Type', 'images.roi.Freehand');
+editedMask = false(size(Image1_adjust1));
+for ind = 1:numel(hfhs)
+    % Accumulate the mask from each ROI
+    editedMask = editedMask | hfhs(ind).createMask();
+end
+
+
+editedMask_cont = activecontour(Image,editedMask, 5 ,'edge');
+EditedMask_B = boundarymask(editedMask_cont); 
+Periphery = labeloverlay(Image1_adjust1, EditedMask_B,'Transparency',0);
+
+imshow(Periphery);%generates outline of tumor periphery separate from escape cavity
+
+BW_active_contour_L = bwlabel(editedMask_cont);
+stats = regionprops(logical(BW_active_contour_L),'Centroid', 'Area', 'Perimeter', 'MajorAxisLength', 'MinorAxisLength');
+
+%Summing all of the individual cells plus entire tumor with invasions
+objectnum = length(stats);
+area_array = [];
+for l=1:objectnum
+        s = regionprops(logical(editedMask_cont), 'Area');
+        areas = cat(1,s.Area);
+        %Concatenate last value of centroids to the end of centroids_arr array (insert as new row to the bottom). 
+        area_arr = [area_array; areas];
+end 
+allareas = [stats.Area];
+numcol = length(allareas);
+[sortedAreas, sortIndexes] = sort(allareas, 'descend');
+Max_area = ismember(BW_active_contour_L, sortIndexes(1));
+imshow(Max_area);
+
+% Calculate the distance from tumor to cavity
+Add_Images = cavity_BW + Max_area;
+imshow(Add_Images);
+Add_Images_opp = ~Add_Images;
+imshow(Add_Images_opp)
+Border=zeros(size(Add_Images_opp),'like', Add_Images_opp);
+Pad= 15;
+Border(Pad:end-Pad,Pad:end-Pad) = 1;
+Final=Border.*Add_Images_opp;
+Final=logical(Final);
+Width=sum(Final,2);
+Width(Width == 0) = NaN;
+distance_to_cav = min(Width);
+
+[rows1,col] = find(editedMask_cont); %Finds all x and y coordinates of nonzero elements in binary image
+Max_xcor_tum = min(col); %max point of invasion spread; this is taking into account individual invasions too
+[rows_cav, col_cav] = find(cavity_BW);
+Max_xcor_cav = max(col_cav);% Finds maximum point of cavity cut
+
+%Generate masked image with cut off to account for different time
+%conditions
+Max_area_thresh = zeros(size(Max_area));
+% Compute d + x
+D_X = distance_to_cav + 615;
+Max_xcor_cav3 = Max_xcor_cav + D_X;
+for j = 1:size(Max_area, 1)
+    for p = 1:size(Max_area, 2)
+        pixel = Max_area(j,p); % Use max area here instead of BW2( which includes individual invasions)because individual invasion sum is calculated later
+if (p >= Max_xcor_cav3)
+    pixel = 0;
+else
+    pixel = Max_area(j,p);
+end
+Max_area_thresh(j, p) = pixel;
+    end
+end
+imshow(Max_area_thresh);
+Max_area_thresh_BW = imbinarize(Max_area_thresh);
+
+% Create a cell array of one row in order to save images in table
+Cell = {1,1};
+
+savename = strcat(outputfolder,'/',outputname,'tu',num2str(tumors(i)),'_d', num2str(days(k)),'.mat');
+    save(string(savename),'Image','editedMask_cont', 'Periphery', 'Total_Tumor', 'cavity_BW', 'Max_area_thresh_BW', 'distance_to_cav', 'Max_area', 'Max_xcor_cav');
+    end
+end 
+
+clear vars 
+outputfolder = uigetdir('C:\Users\Owner\OneDrive\Desktop\Stoll Fellowship Code\','Where would you like to store the converted data?');% Enter output folder
+prompt = 'What name handle would you like to use? (s(number).mat will be added automatically)\\n (enter inside single quotes)\\n';
+dlgtitle = 'Name Handle';
+dims = [1 40];
+outputname = inputdlg(prompt, dlgtitle, dims);
+
+seg_folder = strcat('C:\Users\Owner\OneDrive\Desktop\Stoll Fellowship Code\', ExpID_,'_outputfolder_seg');
+filenames = dir(fullfile(seg_folder,'*mat'));
+total_num = numel(filenames);
+
+for m = 1:total_num
+   f = load(fullfile(seg_folder, filenames(m).name)); 
+   % Find the directory separators
+    str = strcat(seg_folder, filenames(m).name);
+    %Extract tumor number
+    slashlocations = regexp(str, '_');
+    substr = extractAfter(str, slashlocations(2)+6);
+    tumor_num = extractBefore(substr, 2);
+    % Extract the day 
+    substr = extractAfter(str, slashlocations(3)+1);
+    day_num = extractBefore( substr, 2);
+   % Rename necessary variables 
+   Periphery = f. Periphery;
+   Max_area_thresh_BW = f. Max_area_thresh_BW;
+   Total_Tumor = f. Total_Tumor;
+   distance_to_cav = f. distance_to_cav; 
+   editedMask_cont = f. editedMask_cont;
+   Image = f.Image;
+   Max_area = f. Max_area; 
+   Max_xcor_cav = f. Max_xcor_cav;
+   cavity_BW = f. cavity_BW;
+
+    
+BW_active_contour_L = bwlabel(editedMask_cont);
+stats = regionprops(logical(BW_active_contour_L),'Centroid', 'Area', 'Perimeter', 'MajorAxisLength', 'MinorAxisLength');
+
+
+%Summing all of the individual cells plus entire tumor with invasions
+objectnum = length(stats);
+area_array = [];
+for l=1:objectnum
+        s = regionprops(logical(editedMask_cont), 'Area');
+        areas = cat(1,s.Area);
+        %Concatenate last value of centroids to the end of centroids_arr array (insert as new row to the bottom). 
+        area_arr = [area_array; areas];
+end 
+allareas = [stats.Area];
+numcol = length(allareas);
+[sortedAreas, sortIndexes] = sort(allareas, 'descend');
+
+
+BW_active_contour_Max = bwlabel(Max_area_thresh_BW);
+stats_c = regionprops(logical(BW_active_contour_Max),'Centroid', 'Area', 'Perimeter', 'MajorAxisLength', 'MinorAxisLength');
+%Summing all of the individual cells plus entire tumor with invasions
+objectnum_c = length(stats_c);
+area_array_c = [];
+for i=1:objectnum
+        s = regionprops(logical(Max_area_thresh_BW), 'Area');
+        areas = cat(1,s.Area);
+        %Concatenate last value of centroids to the end of centroids_arr array (insert as new row to the bottom). 
+        area_arr = [area_array_c; areas];
+end
+%Sum all of the individual cells plus entire tumor with invasions
+total_tumor_area = sum(area_arr);
+
+%h = impixelinfo;
+allareas_c = [stats_c.Area];
+numcol_c = length(allareas_c);
+[sortedAreas_c, sortIndexes_c] = sort(allareas_c, 'descend');
+Max_area_thresh_BW = ismember(BW_active_contour_Max, sortIndexes_c(1));
+imshow(Max_area_thresh_BW);
+
+SE = strel('disk', 80);
+Tumor_core_open = imopen(Max_area_thresh_BW, SE);
+imshow(Tumor_core_open);
+
+%Code to generate complete tumor core; this will help get rid of the
+%curves at the end of the collective invasions that are part of the tumor
+%core
+Tumor_core_full = imopen(Max_area, SE);
+imshow(Tumor_core_full);
+Tumor_core_full_mask = activecontour(Image, Tumor_core_full, 'Chan-Vese', 20);
+imshow(Tumor_core_full_mask);
+
+%Tumor core for smaller image
+Tumor_coreBW_Mask = activecontour(Image, Tumor_core_open, 'Chan-Vese', 20);
+imshow(Tumor_coreBW_Mask);
+
+Max_xcor_cav2 = Max_xcor_cav + distance_to_cav + 300;% Add pixels to maximum point of cavity 
+[y, x] = find(Tumor_coreBW_Mask);%Locate all nonzero elements in tumor core mask 
+[y_cor, x_cor]= find(x == Max_xcor_cav2);% Find where column = max_xcor_cav value
+Min_y_width = min(y_cor);
+Max_y_width = max(y_cor);
+Width_tumor_core = Max_y_width - Min_y_width;
+individual_invasion_sum = sum(allareas(sortIndexes(2:numcol)));
+
+Max_area_Image_L = bwlabel(Max_area_thresh_BW);
+%Max_area_Image_L_M = bwareaopen(Max_area_Image_L, 400);% removes any small fragments 
+stats_Max_Area_thresh = regionprops(logical(Max_area_Image_L), 'Area');
+
+%Stats for tumor core of masked image
+stats_tumor_core = regionprops(logical(Tumor_coreBW_Mask), 'Area');
+%Tumor Core outline
+Tumor_coreBW_Bound = boundarymask(Tumor_coreBW_Mask);
+imshow(Tumor_coreBW_Bound);
+
+total_fraction_invaded = 1 -((stats_tumor_core.Area)/(stats_Max_Area_thresh.Area));
+
+
+% To generate collective invasion image
+Subtract1 = imsubtract(Max_area_thresh_BW, Tumor_core_full_mask);
+imshow(Subtract1);
+
+% When subtracting the two images above, we get a large white region in the
+% area that should be masked. The for loop below sets all of those pixels
+% back to zero
+Subtract1_a = zeros(size(Max_area));
+for j = 1:size(Max_area, 1)
+    for k = 1:size(Max_area, 2)
+        pixel_s = Subtract1(j,k);
+if (k >= (Max_xcor_cav + distance_to_cav + 615))
+    pixel_s = 0;
+else
+    pixel_s = Subtract1(j,k);
+end
+Subtract1_a(j, k) = pixel_s;
+    end
+end
+imshow(Subtract1_a);
+
+BW_active_contour_thresh = zeros(size(BW_active_contour_L));
+for u = 1:size(BW_active_contour_L, 1)
+    for r = 1:size(BW_active_contour_L, 2)
+        pixel_s = BW_active_contour_L(u,r);
+if (r >= (Max_xcor_cav + distance_to_cav + 300))% stricter cut off to determine pythagorean distance to cavity
+    pixel_s = 0;
+else
+    pixel_s = BW_active_contour_L(u,r);
+end
+BW_active_contour_thresh(u, r) = pixel_s;
+    end
+end
+imshow(BW_active_contour_thresh);
+% crop cavity binary mask
+
+cavity_mask_thresh = zeros(size(cavity_BW));
+for h = 1:size(cavity_BW, 1)
+    for t = 1:size(cavity_BW, 2)
+        pixel_s = cavity_BW(h,t);
+if (t <= (Max_xcor_cav - 200))% stricter cut off to determine pythagorean distance to cavity
+    pixel_s = 0;
+else
+    pixel_s = cavity_BW(h,t);
+end
+cavity_mask_thresh(h, t) = pixel_s;
+    end
+end
+imshow(cavity_mask_thresh);
+
+%Compute the Pythagorean distance from points to cavity
+Mask_entire = bwperim(BW_active_contour_thresh);
+Mask_entire = double(Mask_entire);
+Mask_entire(Mask_entire == 0) = NaN; 
+cavity_BW_mask = bwperim(cavity_mask_thresh);
+[rows_cav, columns_cav] = find(cavity_BW_mask == 1);%Find nonzero pixel coordinates in cavity
+cav_rightmost = max(columns_cav);%Find the rightmost pixel value of the cavity
+cav_rightmost_row_idx = find(columns_cav == cav_rightmost);%Find the corresponding row values
+[rows_tum, columns_tum] = find(Mask_entire == 1);%Find nonzero pixel coordinates in Max area(collective invasions and tumor core)
+num_tum_c = length(columns_tum); %Calculates total row numbers of tumor periphery
+num_cav = length(cav_rightmost_row_idx); %Calculates number of rows that correspond to same rightmost value of cavity
+
+while j < length(columns_cav)
+    for i = 1: num_tum_c
+        % extract points for cavity which will be x1 and y1
+        row_val_cav = rows_cav(j); %y1
+        col_val_cav = columns_cav(j); %x1
+	%Compute the pythagorean dist calculation between the rightmost point
+	%of the cavity to all points in the border of the tumor image
+    dist(i, j) = sqrt((col_val_cav - columns_tum(i)).^2 + (row_val_cav - rows_tum(i)).^2);
+    min_dist = min(dist); %Outputs minimum value in each column of the resulting distance matrix
+    %Checks to see if there are zeros and converts them to NaN
+    l = length(min_dist);
+    for k = 1:l
+        if min_dist(k) == 0
+            min_dist(k) = NaN;
+        end 
+    end
+    end
+end
+%Once the zero values are converted to NaN, we find the minimum distance to
+%from the tumor boundary to the maximum point of the cavity
+
+ %Pythagorean_dist = min(min_dist);
+ Add_Images = cavity_BW + BW_active_contour_thresh;
+ imshow(Add_Images);
+
+Collective_Invasions = bwareaopen(Subtract1_a, 1000); % Filters out areas smaller than 600 pixels
+imshow(Collective_Invasions); % Final collective invasion image
+
+
+Collective_Invasion_L = bwlabel(Collective_Invasions);
+Collective_Invasion_L_C = bwlabel(Collective_Invasions); % Important for cropping images later in selection portion of code
+%imshow(label2rgb(BW_active_contour_L));
+stats_collective_invasions = regionprops(logical(Collective_Invasion_L),'Area');
+num = length(stats_collective_invasions);
+collective_area_array = [];
+collective_area_arr = [];
+stats_C_invasion = regionprops(logical(Collective_Invasion_L), 'all');
+stats_C_invasion_table_data = struct2table(stats_C_invasion, 'AsArray', true);
+
+for i=1:num
+    s = regionprops(logical(Collective_Invasion_L), 'Area');
+    BoundingBox_cor = cat(1,stats_C_invasion(i).BoundingBox);
+    stats_C_invasion_cell = struct2cell(stats_C_invasion);
+    %get dimensions of bounding box 
+    height_C = BoundingBox_cor(:,3) + 12; %height
+    width_C = BoundingBox_cor(:,4) + 10; %width 
+    X_cor_TL_C = BoundingBox_cor(:,1);
+    Y_cor_TL_C = BoundingBox_cor(:,2); 
+    % Use bounding box dimensions to generate frame for individual cells 
+    cell_image_cropped_C = imcrop(Collective_Invasion_L_C, [X_cor_TL_C, Y_cor_TL_C, height_C, width_C]);
+    imshow(cell_image_cropped_C);
+    
+    % get outline of cropped image
+    cell_image_cropped_b = boundarymask(cell_image_cropped_C);
+    
+    savename = strcat(outputfolder,'/',outputname,'Collective_Invasion_tu',tumor_num,'_d', day_num,'.mat');
+    save(string(savename),'Collective_Invasion_L');
+    
+    savename = strcat(outputfolder,'/',outputname,'Cropped_Collective_Invasions',num2str(i),'_tu',tumor_num,'_d', day_num,'.mat');
+    save(string(savename),'cell_image_cropped_C');
+    
+    tumor_number = str2num(tumor_num);
+    day_number = str2num(day_num);
+    
+    collective_index = i;
+    Table_tu_day_Inv_new = table(tumor_number, day_number, collective_index);
+    
+    if i == 1
+        Table_tu_day_Inv_first = table(tumor_number, day_number, collective_index);
+        Table_tu_day_Inv = Table_tu_day_Inv_first;
+    end
+    
+    if i > 1
+        Table_tu_day_Inv = vertcat(Table_tu_day_Inv_new, Table_tu_day_Inv);
+    end 
+        areas = cat(1,s.Area);
+        %Concatenate last value of centroids to the end of centroids_arr array (insert as new row to the bottom). 
+        collective_area_arr = [collective_area_array; areas];
+end
+
+collective_invasion_area = sum(collective_area_arr);
+Invasion_mask = boundarymask(Collective_Invasions);
+
+%Concatenate Table with tumor number and day numbers to
+%stats_c_invasion_table
+Stats_C_invasion_All = horzcat(stats_C_invasion_table_data, Table_tu_day_Inv);
+
+
+BW_active_contour_L2 = bwlabel(Tumor_coreBW_Mask);% Regionprops to extract information from the tumor core
+stats_core = regionprops(logical(BW_active_contour_L2),'Centroid', 'Area', 'Perimeter', 'MajorAxisLength', 'MinorAxisLength');
+table_core = struct2table(stats_core);
+
+Subtract_C = imsubtract(editedMask_cont, Max_area);
+imshow(Subtract_C);
+Individual_Invasions = bwareaopen(Subtract_C, 300);
+Individual_Invasions_L = bwlabel(Individual_Invasions);
+labeled_Image = Individual_Invasions_L;
+labeled_Image_C = Individual_Invasions_L;
+stats_classify = regionprops(logical(Individual_Invasions_L), 'Area');
+Dim = size(stats_classify);
+num_objects = Dim(1,1);
+
+if num_objects > 0
+    individual_invasions_L =  bwlabel(Individual_Invasions);
+    individual_invasions_L_C =  bwlabel(Individual_Invasions);
+    stats_individual_invasions = regionprops(logical(individual_invasions_L), 'all');
+    stats_individual_invasion_table = struct2table(stats_individual_invasions, 'AsArray', true);
+    for l = 1:num_objects
+    BoundingBox_cor = cat(1,stats_individual_invasions(l).BoundingBox);
+    stats_I_invasion_cell = struct2cell(stats_individual_invasions);
+    %get dimensions of bounding box 
+    height_I = BoundingBox_cor(:,3) + 12; %height
+    width_I = BoundingBox_cor(:,4) + 10; %width 
+    X_cor_TL_I = BoundingBox_cor(:,1);
+    Y_cor_TL_I = BoundingBox_cor(:,2); 
+    % Use bounding box dimensions to generate frame for individual cells 
+    cell_image_cropped_Individual = imcrop(individual_invasions_L_C, [X_cor_TL_I, Y_cor_TL_I, height_I, width_I]);
+    imshow(cell_image_cropped_Individual);
+    
+    % get outline of cropped image
+    cell_image_cropped_b = boundarymask(cell_image_cropped_Individual);
+    
+    savename = strcat(outputfolder,'/',outputname,'tu',tumor_num,'_d', day_num,'.mat');
+    save(string(savename),'individual_invasions_L');
+    
+    tumor_number = str2num(tumor_num);
+    day_number = str2num(day_num);
+    individual_invasion_index = l;
+    
+    Table_tu_day_Individual_new = table(tumor_number, day_number, individual_invasion_index);
+    
+    % create a table containing tumor number, day number, and the number of
+    % selected invasion that can be horizontally concatenated to the
+    % Stats_Individual_Invasion table. This can then be vertically added to the main
+    % table for amoeboid invasion statistics
+    if l == 1
+        Table_tu_day_Individual_first = table(tumor_number, day_number, collective_index);
+        Table_tu_day_Individual = Table_tu_day_Individual_first;
+    end
+    
+    if l > 1
+        Table_tu_day_Individual = vertcat(Table_tu_day_Inv_new, Table_tu_day_Individual);
+    end 
+   
+    end
+    
+    
+    Stats_Individual_Invasion_all = horzcat(stats_individual_invasion_table, Table_tu_day_Individual);
+    savename = strcat(outputfolder,'/',outputname,'Stats_Individual_Invasion_all_tu',tumor_num,'_d', day_num,'.mat');
+    save(string(savename),'Stats_Individual_Invasion_all');
+    
+    %Save cropped individual invasions
+    savename = strcat(outputfolder,'/',outputname,'Cropped_Individual_Invasions',num2str(l),'_tu',tumor_num,'_d', day_num,'.mat');
+    save(string(savename),'cell_image_cropped_Individual');
+    
+     
+end
+
+savename = strcat(outputfolder,'/',outputname,'Stats_Collective_Invasion_all_tu',tumor_num,'_d', day_num,'.mat');
+    save(string(savename),'Stats_C_invasion_All');
+    
+savename = strcat(outputfolder,'/',outputname,'Calculations_tu',tumor_num,'_d', day_num, '.mat');
+    save(string(savename), 'individual_invasion_sum','Width_tumor_core', 'Tumor_coreBW_Mask', 'total_tumor_area', 'Individual_Invasions', 'total_fraction_invaded', 'collective_invasion_area', 'table_core');
+end
