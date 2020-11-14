@@ -1,11 +1,15 @@
 % Code for Needle Tumors 
 % % This code asks the user which experiment they would like to process and
 % consequently loads all of the data from that experiment 
-% The code consequently creates performs the tumor segmentation, outputting
+% The code then performs the tumor segmentation, outputting
 % segmentations of individual invasions as well as the tumor area, the
 % maximum area threshold image, binary cavity mask
 % and the needle tumor periphery. The distance between the cavity and the
-% tumor is also calculated. 
+% tumor is also calculated. The code then moves to the calculation portion. It outputs tables holding all of the statistics 
+%for the collective invasions and the individual invasions for each tumor. It saves the cropped image of each invasion 
+%in addition to an image containing all of the collective invasions and all of the individual invasions for each tumor. The code also
+%outputs the width of the tumor core, collective invasion area, individual invasion sum, total tumor area, a table holding data 
+%for each tumor core, and the total fraction invaded.
 
 clear vars 
 outputfolder = uigetdir('C:\Users\Owner\OneDrive\Desktop\Stoll Fellowship Code\','Where would you like to store the converted data?');% Enter output folder
@@ -176,6 +180,7 @@ for ind = 1:numel(blocations)
     drawfreehand('Position', pos);
 end
 
+%%%!! Insert breakpoint in MatLab to edit mask
 % Convert edited ROI back to masks.
 hfhs = findobj(gca, 'Type', 'images.roi.Freehand');
 editedMask = false(size(Image1_adjust1));
