@@ -474,8 +474,8 @@ for i=1:num
     BoundingBox_cor = cat(1,stats_C_invasion(i).BoundingBox);
     stats_C_invasion_cell = struct2cell(stats_C_invasion);
     %get dimensions of bounding box 
-    height_C = BoundingBox_cor(:,3) + 15; %height
-    width_C = BoundingBox_cor(:,4) + 10; %width 
+    height_C = BoundingBox_cor(:,3) + 18; %height
+    width_C = BoundingBox_cor(:,4) + 12; %width 
     X_cor_TL_C = BoundingBox_cor(:,1);
     Y_cor_TL_C = BoundingBox_cor(:,2); 
     % Use bounding box dimensions to generate frame for individual cells 
@@ -544,8 +544,8 @@ if num_objects > 0
     BoundingBox_cor = cat(1,stats_individual_invasions(l).BoundingBox);
     stats_I_invasion_cell = struct2cell(stats_individual_invasions);
     %get dimensions of bounding box 
-    height_I = BoundingBox_cor(:,3) + 15; %height
-    width_I = BoundingBox_cor(:,4) + 10; %width 
+    height_I = BoundingBox_cor(:,3) + 18; %height
+    width_I = BoundingBox_cor(:,4) + 12; %width 
     X_cor_TL_I = BoundingBox_cor(:,1);
     Y_cor_TL_I = BoundingBox_cor(:,2); 
     % Use bounding box dimensions to generate frame for individual cells 
